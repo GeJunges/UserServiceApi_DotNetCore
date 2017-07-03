@@ -1,0 +1,8 @@
+version: '2'
+
+services:
+  userservices:
+    image: userservices
+    build:
+      context: ./UserServices
+      dockerfile: Dockerfile
