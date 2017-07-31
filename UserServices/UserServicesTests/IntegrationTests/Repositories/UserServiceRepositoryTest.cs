@@ -54,7 +54,7 @@ namespace UserServicesTests.IntegrationTests.Repositories {
             var users = await InsertUsersToTests();
             var expected = users.First();
 
-            var actual = await _repository.GetUser(expected.Id);
+            var actual = await _repository.GetUserById(expected.Id);
 
             Assert.AreEqual(expected, actual);
         }
@@ -64,7 +64,7 @@ namespace UserServicesTests.IntegrationTests.Repositories {
             await InsertUsersToTests();
             var id = Guid.NewGuid();
 
-            var actual = await _repository.GetUser(id);
+            var actual = await _repository.GetUserById(id);
 
             Assert.IsNull(actual);
         }
@@ -74,7 +74,7 @@ namespace UserServicesTests.IntegrationTests.Repositories {
             var expected = CreateUser();
 
             await _repository.Insert(expected);
-            var actual = await _repository.GetUser(expected.Id);
+            var actual = await _repository.GetUserById(expected.Id);
 
             Assert.AreEqual(expected, actual);
         }
@@ -118,7 +118,7 @@ namespace UserServicesTests.IntegrationTests.Repositories {
             expected.LastName = "Updated";
 
             await _repository.Update(expected);
-            var actual = await _repository.GetUser(expected.Id);
+            var actual = await _repository.GetUserById(expected.Id);
 
             Assert.AreEqual(expected, actual);
         }
@@ -160,7 +160,7 @@ namespace UserServicesTests.IntegrationTests.Repositories {
             var userToRemove = users.Result.Last();
 
             await _repository.Delete(userToRemove);
-            var actual = await _repository.GetUser(userToRemove.Id);
+            var actual = await _repository.GetUserById(userToRemove.Id);
 
             Assert.IsNull(actual);
         }

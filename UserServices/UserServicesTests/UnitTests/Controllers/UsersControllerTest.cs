@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using AutoMapper;
+using Microsoft.AspNetCore.Mvc;
 using Moq;
 using NUnit.Framework;
 using System;
@@ -17,27 +18,29 @@ namespace UserServicesTests.UnitTests.Controllers {
     [TestFixture]
     public class UserControllerTest {
 
-        private UserController _controller;
+        private UsersController _controller;
         private Mock<IUserServiceRepository> _userServiceRepositoryMock;
+        private Mock<IMapper> _autoMapperMock;
 
         [SetUp]
         public void SetUp() {
-            AutoMapper.Mapper.Initialize(cfg => {
-                cfg.CreateMap<UserEntity, User>();
-                cfg.CreateMap<User, UserEntity>();
-            });
+            _autoMapperMock = new Mock<IMapper>();
+
+            //_autoMapperMock.Setup(map => map.Map(It.IsAny<UserEntity>(), It.IsAny<User>())).Returns(It.IsAny<User>());
+            //_autoMapperMock.Setup(map => map.Map(It.IsAny<User>(), It.IsAny<UserEntity>())).Returns(It.IsAny<UserEntity>());
 
             _userServiceRepositoryMock = new Mock<IUserServiceRepository>();
-            _controller = new UserController(_userServiceRepositoryMock.Object);
+            _controller = new UsersController(_autoMapperMock.Object, _userServiceRepositoryMock.Object);
         }
 
         [Test]
-        public void GetUsers_Should_list_all_users() {
-            var expected = GetExpected();
+        public void Get_Should_list_all_users() {
+            var expected = GetExpectedUsers();
             var setup = GetUsersEntityMock();
             _userServiceRepositoryMock.Setup(s => s.GetUsers()).ReturnsAsync(setup);
+            _autoMapperMock.Setup(map => map.Map<List<User>>(setup)).Returns(expected);
 
-            var actual = (List<User>)((ObjectResult)_controller.GetUsers()).Value;
+            var actual = (List<User>)((ObjectResult)_controller.Get().Result).Value;
 
             for (int i = 0; i < 2; i++) {
                 Assert.AreEqual(expected[i].FirstName, actual[i].FirstName);
@@ -48,24 +51,36 @@ namespace UserServicesTests.UnitTests.Controllers {
         }
 
         [Test]
-        public void GetUsers_Should_return_status_code_500_if_error() {
+        public void Get_Should_return_an_empty_array_if_there_is_no_user() {
+            _userServiceRepositoryMock.Setup(s => s.GetUsers()).ReturnsAsync(new List<UserEntity>());
+            _autoMapperMock.Setup(map => map.Map<List<User>>(It.IsAny<List<UserEntity>>())).Returns(new List<User>());
+
+            var actual = (List<User>)((ObjectResult)_controller.Get().Result).Value;
+
+            Assert.IsEmpty(actual);
+        }
+
+        [Test]
+        public void Get_Should_return_status_code_500_if_error() {
             _userServiceRepositoryMock.Setup(user => user.GetUsers()).Throws(new Exception());
             var expected = (int)HttpStatusCode.InternalServerError;
 
-            var actual = ((ObjectResult)_controller.GetUsers()).StatusCode;
+            var actual = ((ObjectResult)_controller.Get().Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
         }
 
         [TestCase("00000000-1111-1234-2222-333333334444")]
         [TestCase("00000000-1111-1234-2222-888888887777")]
-        public void GetUser_Should_return_one_user_when_for_id(string id) {
+        public void Get_Should_return_one_user_by_id(string id) {
             var guidId = new Guid(id);
-            var setup = GetUsersEntityMock().FirstOrDefault(i => i.Id == guidId);
-            var expected = GetExpected().FirstOrDefault(e => e.Email == setup.Email);
-            _userServiceRepositoryMock.Setup(user => user.GetUser(It.IsAny<Guid>())).ReturnsAsync(setup);
+            var users = GetUsersEntityMock();
+            var expected = users.FirstOrDefault(user => user.Id == guidId);
+            var userMapper = GetExpectedUsers().FirstOrDefault(e => e.Email == expected.Email);
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).ReturnsAsync(expected);
+            _autoMapperMock.Setup(map => map.Map<User>(expected)).Returns(userMapper);
 
-            var actual = (User)((ObjectResult)_controller.GetUser(guidId).Result).Value;
+            var actual = (User)((ObjectResult)_controller.Get(guidId).Result).Value;
 
             Assert.AreEqual(expected.FirstName, actual.FirstName);
             Assert.AreEqual(expected.LastName, actual.LastName);
@@ -74,23 +89,23 @@ namespace UserServicesTests.UnitTests.Controllers {
         }
 
         [Test]
-        public void GetUser_Should_return_status_code_404_if_user_dont_exist() {
+        public void Get_Should_return_status_code_404_if_user_dont_exist() {
             var guidId = Guid.NewGuid();
-            _userServiceRepositoryMock.Setup(user => user.GetUser(It.IsAny<Guid>())).ReturnsAsync((UserEntity)null);
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).ReturnsAsync((UserEntity)null);
             var expected = (int)HttpStatusCode.NotFound;
 
-            var actual = ((ObjectResult)_controller.GetUser(guidId).Result).StatusCode;
+            var actual = ((ObjectResult)_controller.Get(guidId).Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void GetUser_Should_return_status_code_500_if_error() {
+        public void Get_Should_return_status_code_500_if_error_to_get_user() {
             var guidId = Guid.NewGuid();
-            _userServiceRepositoryMock.Setup(user => user.GetUser(It.IsAny<Guid>())).Throws(new Exception());
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).Throws(new Exception());
             var expected = (int)HttpStatusCode.InternalServerError;
 
-            var actual = ((ObjectResult)_controller.GetUser(guidId).Result).StatusCode;
+            var actual = ((ObjectResult)_controller.Get(guidId).Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
         }
@@ -285,35 +300,62 @@ namespace UserServicesTests.UnitTests.Controllers {
         }
 
         [Test]
-        public void Updade_Should_return_status_code_200_if_Updade_with_success() {
+        public void Put_Should_return_status_code_200_if_updated_with_success() {
             var user = GetUser();
             var statusCodeExpected = (int)HttpStatusCode.OK;
-            _userServiceRepositoryMock.Setup(u => u.Insert(It.IsAny<UserEntity>()));
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
+            var userEntity = GetDefaultUserEntity(guidId);
+            var expected = new UserEntity {
+                Id = userEntity.Id,
+                Email = user.Email,
+                FirstName = user.FirstName,
+                LastName = user.LastName,
+                Role = user.Role
+            };
+            _userServiceRepositoryMock.Setup(u => u.GetUserById(guidId)).ReturnsAsync(userEntity);
+            _autoMapperMock.Setup(map => map.Map(user, userEntity)).Returns(expected);
 
-            var actual = ((ObjectResult)_controller.Updade(user).Result);
+            var actual = ((ObjectResult)_controller.Put(guidId, user).Result);
+
+            Assert.AreEqual(statusCodeExpected, actual.StatusCode);
+            _userServiceRepositoryMock.Verify(put => put.Update(It.IsAny<UserEntity>()), Times.Once());
+            _userServiceRepositoryMock.Verify(put => put.Update(expected));
+        }
+
+        [Test]
+        public void Put_Should_return_status_code_400_if_model_state_is_invalid() {
+            _controller.ModelState.AddModelError("Error", "Error");
+            var statusCodeExpected = (int)HttpStatusCode.BadRequest;
+            var guidId = Guid.NewGuid();
+
+            var actual = ((ObjectResult)_controller.Put(guidId, new User()).Result);
 
             Assert.AreEqual(statusCodeExpected, actual.StatusCode);
         }
 
         [Test]
-        public void Updade_Should_return_status_code_400_if_model_state_is_invalid() {
-            _controller.ModelState.AddModelError("Error", "Error");
-            var statusCodeExpected = (int)HttpStatusCode.BadRequest;
+        public void Put_Should_return_status_code_404_if_user_dont_exist() {
+            var guidId = Guid.NewGuid();
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).ReturnsAsync((UserEntity)null);
+            var expected = (int)HttpStatusCode.NotFound;
 
-            var actual = ((ObjectResult)_controller.Updade(new User()).Result);
+            var actual = ((ObjectResult)_controller.Put(guidId, new User()).Result).StatusCode;
 
-            Assert.AreEqual(statusCodeExpected, actual.StatusCode);
+            Assert.AreEqual(expected, actual);
         }
 
         [TestCase("")]
         [TestCase(" ")]
         [TestCase(null)]
-        public void Updade_Should_return_message_field_is_required_if_mail_is_null_or_empy(string email) {
+        public void Put_Should_return_message_field_is_required_if_mail_is_null_or_empy(string email) {
             var expected = "The Email field is required.";
             _controller.ModelState.AddModelError("Email", expected);
             var user = GetUser(email: email);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -322,24 +364,28 @@ namespace UserServicesTests.UnitTests.Controllers {
         [TestCase("email@")]
         [TestCase("@email")]
         [TestCase("email.com")]
-        public void Updade_Should_return_error_message_if_mail_is_invalid(string email) {
+        public void Put_Should_return_error_message_if_mail_is_invalid(string email) {
             var expected = "The Email field is not a valid e-mail address.";
             _controller.ModelState.AddModelError("Email", expected);
             var user = GetUser(email: email);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_error_message_if_mail_is_invalid() {
+        public void Put_Should_return_error_message_if_mail_is_invalid() {
             var expected = "Email must be a maximum 100 characters.";
             _controller.ModelState.AddModelError("Email", expected);
             var user = GetUser(email: "thisisabigemailmostbigofworld@thisisabigemailmostbigofworldthisisabigemailmostbigofworldthisisabigemail");
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -348,12 +394,14 @@ namespace UserServicesTests.UnitTests.Controllers {
         [TestCase("")]
         [TestCase(" ")]
         [TestCase(null)]
-        public void Updade_Should_return_message_field_is_required_if_first_name_is_null_or_empy(string firstName) {
+        public void Put_Should_return_message_field_is_required_if_first_name_is_null_or_empy(string firstName) {
             var expected = "The FirstName field is required.";
             _controller.ModelState.AddModelError("FirstName", expected);
             var user = GetUser(firstName: firstName);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -361,24 +409,28 @@ namespace UserServicesTests.UnitTests.Controllers {
 
         [TestCase("st")]
         [TestCase("g")]
-        public void Updade_Should_return_message_error_if_first_name_is_shorter(string firstName) {
+        public void Put_Should_return_message_error_if_first_name_is_shorter(string firstName) {
             var expected = "FirstName must be minimum 3 characters";
             _controller.ModelState.AddModelError("FirstName", expected);
             var user = GetUser(firstName: firstName);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_message_error_if_first_name_is_longer() {
+        public void Put_Should_return_message_error_if_first_name_is_longer() {
             var expected = "FirstName must be maximum 100 characters";
             _controller.ModelState.AddModelError("FirstName", expected);
             var user = GetUser(firstName: "unmonheahsjkahdaio9yadaodjpaisdadaudoiaosidunmonheahsjkahdaio9yadaodjpaisdadaudoiaosidouqwahskasçpsd");
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -387,12 +439,14 @@ namespace UserServicesTests.UnitTests.Controllers {
         [TestCase("")]
         [TestCase(" ")]
         [TestCase(null)]
-        public void Updade_Should_return_message_field_is_required_if_last_name_is_null_or_empy(string lastName) {
+        public void Put_Should_return_message_field_is_required_if_last_name_is_null_or_empy(string lastName) {
             var expected = "The LastName field is required.";
             _controller.ModelState.AddModelError("LastName", expected);
             var user = GetUser(lastName: lastName);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -400,24 +454,28 @@ namespace UserServicesTests.UnitTests.Controllers {
 
         [TestCase("st")]
         [TestCase("g")]
-        public void Updade_Should_return_message_error_if_last_name_is_shorter(string lastName) {
+        public void Put_Should_return_message_error_if_last_name_is_shorter(string lastName) {
             var expected = "LastName must be minimum 3 characters.";
             _controller.ModelState.AddModelError("LastName", expected);
             var user = GetUser(lastName: lastName);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_message_error_if_last_name_is_longer() {
+        public void Put_Should_return_message_error_if_last_name_is_longer() {
             var expected = "LastName must be maximum 100 characters.";
             _controller.ModelState.AddModelError("LastName", expected);
             var user = GetUser(lastName: "unmonheahsjkahdaio9yadaodjpaisdadaudoiaosidunmonheahsjkahdaio9yadaodjpaisdadaudoiaosidouqwahskasçpsd");
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
@@ -426,70 +484,80 @@ namespace UserServicesTests.UnitTests.Controllers {
         [TestCase(-1)]
         [TestCase(0)]
         [TestCase(null)]
-        public void Updade_Should_return_message_field_is_required_if_role_is_invalid(Role role) {
+        public void Put_Should_return_message_field_is_required_if_role_is_invalid(Role role) {
             var expected = "The Role field is required.";
             _controller.ModelState.AddModelError("Role", expected);
             var user = GetUser(role: role);
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_message_error_if_cpf_cnpj_is_shorter() {
+        public void Put_Should_return_message_error_if_cpf_cnpj_is_shorter() {
             var expected = "CpfCnpj must be minimum 11 characters.";
             _controller.ModelState.AddModelError("CpfCnpj", expected);
             var user = GetUser();
             user.CpfCnpj = "1234567891";
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_message_error_if_cpf_cnpj_is_longer() {
+        public void Put_Should_return_message_error_if_cpf_cnpj_is_longer() {
             var expected = "CpfCnpj must be maximum 14 characters.";
             _controller.ModelState.AddModelError("CpfCnpj", expected);
             var user = GetUser();
             user.CpfCnpj = "123456789101215";
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
 
-            var result = ((SerializableError)((ObjectResult)_controller.Updade(user).Result).Value).Values;
+            var result = ((SerializableError)((ObjectResult)_controller.Put(guidId, user).Result).Value).Values;
             var actual = result.Select(value => (string[])value).FirstOrDefault()[0];
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
-        public void Updade_Should_return_status_code_500_if_error() {
+        public void Put_Should_return_status_code_500_if_error() {
+            var guidId = Guid.NewGuid();
+            SetupRepositoryGetUser(guidId);
             _userServiceRepositoryMock.Setup(user => user.Update(It.IsAny<UserEntity>())).Throws(new Exception());
             var expected = (int)HttpStatusCode.InternalServerError;
 
-            var actual = ((ObjectResult)_controller.Updade(new User()).Result).StatusCode;
+            var actual = ((ObjectResult)_controller.Put(guidId, new User()).Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
         }
 
         [Test]
         public void Delete_Should_return_status_code_200_if_user_removed_with_success() {
-            var guidId = new Guid("00000000-1111-1234-2222-333333334444");
-            var userEntity = GetUsersEntityMock().FirstOrDefault(i => i.Id == guidId);
-            _userServiceRepositoryMock.Setup(user => user.GetUser(guidId)).ReturnsAsync(userEntity);
+            var guidId = Guid.NewGuid(); ;
+            var userEntity = GetDefaultUserEntity(guidId);
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(guidId)).ReturnsAsync(userEntity);
             _userServiceRepositoryMock.Setup(user => user.Delete(userEntity)).Returns(Task.FromResult(0));
             var expected = (int)HttpStatusCode.OK;
 
             var actual = ((ObjectResult)_controller.Delete(guidId).Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
+            _userServiceRepositoryMock.Verify(del => del.Delete(It.IsAny<UserEntity>()), Times.Once);
+            _userServiceRepositoryMock.Verify(del => del.Delete(userEntity));
         }
 
         [Test]
         public void Delete_Should_return_status_code_404_if_user_dont_exist() {
             var guidId = Guid.NewGuid();
-            _userServiceRepositoryMock.Setup(user => user.GetUser(It.IsAny<Guid>())).ReturnsAsync((UserEntity)null);
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).ReturnsAsync((UserEntity)null);
             var expected = (int)HttpStatusCode.NotFound;
 
             var actual = ((ObjectResult)_controller.Delete(guidId).Result).StatusCode;
@@ -500,13 +568,18 @@ namespace UserServicesTests.UnitTests.Controllers {
         [Test]
         public void Delete_Should_return_status_code_500_if_error() {
             var guidId = Guid.NewGuid();
-            _userServiceRepositoryMock.Setup(user => user.GetUser(It.IsAny<Guid>())).ReturnsAsync(new UserEntity());
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(It.IsAny<Guid>())).ReturnsAsync(new UserEntity());
             _userServiceRepositoryMock.Setup(user => user.Delete(It.IsAny<UserEntity>())).Throws(new Exception());
             var expected = (int)HttpStatusCode.InternalServerError;
 
             var actual = ((ObjectResult)_controller.Delete(guidId).Result).StatusCode;
 
             Assert.AreEqual(expected, actual);
+        }
+
+        private void SetupRepositoryGetUser(Guid guidId) {
+            var userEntity = GetDefaultUserEntity(guidId);
+            _userServiceRepositoryMock.Setup(user => user.GetUserById(guidId)).ReturnsAsync(userEntity);
         }
 
         private static User GetUser(string firstName = "first", string lastName = "last", string email = "email@email.com", Role role = Role.User) {
@@ -518,7 +591,7 @@ namespace UserServicesTests.UnitTests.Controllers {
             };
         }
 
-        private List<User> GetExpected() {
+        private List<User> GetExpectedUsers() {
             return new List<User> {
                 new User {
                     FirstName = "Test 1",
@@ -551,6 +624,16 @@ namespace UserServicesTests.UnitTests.Controllers {
                     Email="test2@test.com",
                     Role = Role.Guest
                 }
+            };
+        }
+
+        private static UserEntity GetDefaultUserEntity(Guid guid) {
+            return new UserEntity {
+                Id = guid,
+                FirstName = "Firt Name",
+                LastName = "Last Name",
+                Email = "default@test.com",
+                Role = Role.User
             };
         }
     }

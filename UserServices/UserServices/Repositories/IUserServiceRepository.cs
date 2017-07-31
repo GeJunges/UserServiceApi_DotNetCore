@@ -6,7 +6,8 @@ using UserServicesDotNetCore.Entities;
 namespace UserServices.Repositories {
     public interface IUserServiceRepository {
         Task<List<UserEntity>> GetUsers();
-        Task<UserEntity> GetUser(Guid id);
+        Task<UserEntity> GetUserById(Guid id);
+        Task<UserEntity> GetUserByEmail(string email);
         Task Insert(UserEntity user);
         Task Update(UserEntity user);
         Task Delete(UserEntity user);

@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using UserServicesDotNetCore.Entities;
+using UserServicesDotNetCore.Helpers;
 
 namespace UserServices.Entities {
     public class AppDbContext : DbContext {
@@ -15,8 +16,12 @@ namespace UserServices.Entities {
 
             modelBuilder.Entity<UserEntity>(entity => {
                 entity.HasKey(u => u.Id);
+                entity.Property(p => p.FirstName).IsRequired();
+                entity.Property(p => p.LastName).IsRequired();
+                entity.Property(p => p.Email).IsRequired();
                 entity.HasIndex(u => u.Email).IsUnique();
                 entity.HasIndex(u => u.CpfCnpj).IsUnique();
+                entity.Property(p => p.Role).IsRequired().HasDefaultValue(Role.User);
             });
         }
     }

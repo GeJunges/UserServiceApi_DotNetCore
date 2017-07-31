@@ -1,6 +1,6 @@
 
 
-<<<<<IN CONSTRUCTION>>>>>
+/****IN CONSTRUCTION****/
 
 STARTUP class:
 	METHODS:
@@ -13,4 +13,6 @@ STARTUP class:
 		• Transient: A new instance is created every time.
 		• Singleton: A single instance is created and it acts like a singleton.
 		• Scoped: A single instance is created inside the current scope. It is equivalent to Singleton in the current scope.
+
+
 		

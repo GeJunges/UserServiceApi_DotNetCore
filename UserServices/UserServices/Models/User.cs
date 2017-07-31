@@ -3,7 +3,6 @@ using UserServicesDotNetCore.Helpers;
 
 namespace UserServices.Models {
     public class User {
-
         [Required]
         [MinLength(3, ErrorMessage = "FirstName must be minimum 3 characters")]
         [MaxLength(100, ErrorMessage = "FirstName must be maximum 100 characters")]

@@ -8,23 +8,28 @@ using System.Collections.Generic;
 using UserServices.Models;
 using UserServices.Helpers;
 using System.Threading.Tasks;
+using UserServices.Middlewares;
+using Microsoft.AspNetCore.Authorization;
 
 namespace UserServices.Controllers {
-    [Route("api/user")]
-    public class UserController : Controller {
+    [Authorize]
+    [Route("api/users")]
+    public class UsersController : Controller {
 
         private IUserServiceRepository _userServiceRepository;
+        private IMapper _autoMapper;
 
-        public UserController(IUserServiceRepository userServiceRepository) {
+        public UsersController(IMapper autoMapper, IUserServiceRepository userServiceRepository) {
             _userServiceRepository = userServiceRepository;
+            _autoMapper = autoMapper;
         }
 
         [HttpGet]
-        [Route("GetUsers")]
-        public IActionResult GetUsers() {
+        public async Task<IActionResult> Get() {
             try {
-                var usersEntity = _userServiceRepository.GetUsers();
-                var users = Mapper.Map<List<User>>(usersEntity.Result);
+                var usersEntity = await _userServiceRepository.GetUsers();
+
+                var users = _autoMapper.Map<List<User>>(usersEntity);
                 return Ok(users);
             }
             catch (Exception ex) {
@@ -32,15 +37,14 @@ namespace UserServices.Controllers {
             }
         }
 
-        [HttpGet]
-        [Route("GetUser/{id}")]
-        public async Task<IActionResult> GetUser(Guid id) {
+        [HttpGet("{id}")]
+        public async Task<IActionResult> Get(Guid id) {
             try {
-                var userEntity = await _userServiceRepository.GetUser(id);
+                var userEntity = await _userServiceRepository.GetUserById(id);
                 if (userEntity == null) {
                     return StatusCode((int)HttpStatusCode.NotFound, "user not foud");
                 }
-                var user = Mapper.Map<User>(userEntity);
+                var user = _autoMapper.Map<User>(userEntity);
 
                 return Ok(user);
             }
@@ -50,14 +54,19 @@ namespace UserServices.Controllers {
         }
 
         [HttpPost]
-        [Route("Register")]
+        [MiddlewareFilter(typeof(PasswordEncryptor))]
         public async Task<IActionResult> Register([FromBody]User user) {
             try {
                 if (!ModelState.IsValid) {
                     return new UnprocessableEntityObjectResult(ModelState);
                 }
 
-                var userEntity = Mapper.Map<UserEntity>(user);
+                var exist = _userServiceRepository.GetUserByEmail(user.Email).Result;
+                if (exist != null) {
+                    return StatusCode((int)HttpStatusCode.BadRequest, "E-mail already registered!");
+                }
+
+                var userEntity = _autoMapper.Map<UserEntity>(user);
                 await _userServiceRepository.Insert(userEntity);
                 return StatusCode((int)HttpStatusCode.Created, "Success!");
             }
@@ -66,16 +75,21 @@ namespace UserServices.Controllers {
             }
         }
 
-        [HttpPut]
-        [Route("Updade")]
-        public async Task<IActionResult> Updade([FromBody]User user) {
+        [HttpPut("{id}")]
+        public async Task<IActionResult> Put(Guid id, [FromBody]User user) {
             try {
                 if (!ModelState.IsValid) {
                     return new UnprocessableEntityObjectResult(ModelState);
                 }
+                var userEntity = await _userServiceRepository.GetUserById(id);
 
-                var userEntity = Mapper.Map<UserEntity>(user);
-                await _userServiceRepository.Update(userEntity);
+                if (userEntity == null) {
+                    return StatusCode((int)HttpStatusCode.NotFound, "user not foud");
+                }
+
+                var userToUpdate = _autoMapper.Map(user, userEntity);
+
+                await _userServiceRepository.Update(userToUpdate);
                 return StatusCode((int)HttpStatusCode.OK, "Success!");
             }
             catch (Exception ex) {
@@ -83,11 +97,10 @@ namespace UserServices.Controllers {
             }
         }
 
-        [HttpDelete]
-        [Route("Delete/{id}")]
+        [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(Guid id) {
             try {
-                var userEntity = await _userServiceRepository.GetUser(id);
+                var userEntity = await _userServiceRepository.GetUserById(id);
 
                 if (userEntity == null) {
                     return StatusCode((int)HttpStatusCode.NotFound, "user not foud");
